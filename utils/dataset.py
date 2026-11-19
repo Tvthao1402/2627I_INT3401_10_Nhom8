@@ -148,3 +148,46 @@ class DetectionDataset:
 
     "thực hiện các phép biến đổi ngẫu nhiên để giảm overfit"
     # dataset đang xử lý, ảnh gốc đã đọc, hộp và nhãn của ảnh, kích thước resize
+    def _prepare(self, image, target, size):
+        import torch
+
+        boxes, labels = target["boxes"], target["labels"]
+        # chỉ thực hiện nếu đang bật đổi màu
+        if self.color_jitter and random.random() < 0.8:
+            image = ImageEnhance.Brightness(image).enhance(random.uniform(0.5, 1.5))
+            image = ImageEnhance.Contrast(image).enhance(random.uniform(0.5, 1.5))
+            image = ImageEnhance.Color(image).enhance(random.uniform(0.5, 1.5))
+            # chuyển từ rgb sang hsv rồi tách thành 3 kênh
+            hue, saturation, value = image.convert("HSV").split()
+            shift = int(random.uniform(-0.1, 0.1) * 255)
+            hue = hue.point([(level + shift) % 256 for level in range(256)])
+            image = Image.merge("HSV", (hue, saturation, value)).convert("RGB")
+            # 10% cơ hội thành ảnh đen trắng
+            if random.random() < 0.1:
+                image = ImageOps.grayscale(image).convert("RGB")
+        if self.random_crop and random.random() < 0.5:
+            image, boxes, labels = crop_sample(image, boxes, labels)
+        # lật trái phải
+        if self.hflip and random.random() < 0.5:
+            image, boxes = flip_sample(image, boxes)
+        # lật trên dưới
+        if self.train and random.random() < 0.15:
+            height = image.height
+            image = image.transpose(Image.Transpose.FLIP_TOP_BOTTOM)
+            boxes = [(x1, height - y2, x2, height - y1) for x1, y1, x2, y2 in boxes]
+
+        image, boxes = resize_sample(image, boxes, size)
+        # chuyển thành tensor số thực, sx thành dạng mỗi hàng có 4 tọa độ
+        # giữ các tọa độ trong khoảng 0 -> size
+        box_tensor = torch.as_tensor(boxes, dtype=torch.float32).reshape(-1, 4).clamp_(0, size)
+        # chuyển nhãn lớp thành tensor số nguyên
+        label_tensor = torch.as_tensor(labels, dtype=torch.long)
+        # x2-x1, y2-y1, chỉ giữ khung có kích thước >1
+        valid = ((box_tensor[:, 2:] - box_tensor[:, :2]) > 1).all(dim=1)
+        tensor = image_to_tensor(image)
+        if self.train and random.random() < 0.2:
+            # 20% che 1 vùng nhỏ trên ảnh
+            erase_patch(tensor)
+        # ảnh đã xử lý, các hộp hợp lệ, nhãn của các hộp đang giữ
+        return tensor, box_tensor[valid], label_tensor[valid]
+
