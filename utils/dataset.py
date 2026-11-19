@@ -191,3 +191,42 @@ class DetectionDataset:
         # ảnh đã xử lý, các hộp hợp lệ, nhãn của các hộp đang giữ
         return tensor, box_tensor[valid], label_tensor[valid]
 
+    def _mosaic(self, image, target, size):
+        import torch
+        from torch.nn.functional import interpolate
+
+        # chia lấy phần nguyên 2 đường cắt
+        cut_x = random.randint(size // 4, size * 3 // 4)
+        cut_y = random.randint(size // 4, size * 3 // 4)
+        # 4 vùng cắt, (trái trên, phải trên, trái dưới, phải dưới)
+        bounds = ((0, 0, cut_x, cut_y), (cut_x, 0, size, cut_y),
+                  (0, cut_y, cut_x, size), (cut_x, cut_y, size, size))
+        # ô đầu tiên là ảnh đang đc xử lý
+        samples = [(image, target)]
+        # lấy 3 ảnh ngẫu nhiên khác từ dataset, có thể trùng với ảnh gốc
+        samples.extend(self.read_original(random.randrange(len(self))) for _ in range(3))
+        # tạo ảnh vuông rỗng, 3 kênh, kích thước size x size
+        canvas = torch.zeros((3, size, size))
+        all_boxes, all_labels = [], []
+        # đặt ảnh 1 vào ô 1,..., resize về kích thước ô
+        for (sample, annotation), (left, top, right, bottom) in zip(samples, bounds):
+            # tính kích thước ô, đảm bảo >=32 pixel
+            width, height = right - left, bottom - top
+            tile_size = max(32, min(width, height))
+            # title là tensor ảnh đã resize
+            tile, boxes, labels = self._prepare(sample, annotation, tile_size)
+            # canvas là ảnh mosaic, title[None] là thêm batch (1,3,H,W), interpolate dùng để resize ảnh đầu ra
+            canvas[:, top:bottom, left:right] = interpolate(
+                tile[None], size=(height, width), mode="bilinear", align_corners=False
+            )[0] # dùng [0] để bỏ batch, lấy tensor 3 chiều CHW
+
+            # chiều rộng vùng ảnh sau khi ghép / trước khi ghép mosaic
+            boxes[:, 0::2].mul_(width / tile_size).add_(left).clamp_(left, right)
+            boxes[:, 1::2].mul_(height / tile_size).add_(top).clamp_(top, bottom)
+            # chỉ giữ các hộp có diện tích >2 pixel, tránh các hộp quá nhỏ
+            valid = ((boxes[:, 2:] - boxes[:, :2]) > 2).all(dim=1)
+            all_boxes.append(boxes[valid])
+            all_labels.append(labels[valid])
+            # ảnh mosaic, tất cả các hộp hợp lệ, nhãn tương ứng
+        return canvas, torch.cat(all_boxes), torch.cat(all_labels)
+
