@@ -262,3 +262,31 @@ class DetectionDataset:
         return tensor, {**target, "boxes": boxes, "labels": labels}
 
 
+def erase_patch(tensor):
+    """Đặt một vùng nhỏ về 0 sau chuẩn hóa (màu trung bình ImageNet)."""
+    # tensor là ảnh 3 chiều (C,H,W)
+    _, height, width = tensor.shape
+    for _ in range(10):
+        area = height * width * random.uniform(0.02, 0.2)
+        # ratio là chiều cao/ chiều rộng của vùng cắt
+        ratio = random.uniform(0.3, 1 / 0.3)
+        # **0.5 là căn bậc 2 , round làm tròn đảm bảo vùng cắt >=1 pixel
+        patch_height = round((area * ratio) ** 0.5)
+        patch_width = round((area / ratio) ** 0.5)
+        # chỉ dùng miếng che có kích thước dương và nhỏ hơn ảnh
+        if 0 < patch_height < height and 0 < patch_width < width:
+            top = random.randint(0, height - patch_height)
+            left = random.randint(0, width - patch_width)
+            # bắt đầu:kết thúc, top left là vị trí bắt đầu của miếng che
+            tensor[:, top:top + patch_height, left:left + patch_width] = 0
+            return
+
+
+def collate_fn(batch):
+    """Ảnh được ghép thành một tensor batch (khay theo lô), nhãn của từng ảnh để trong ngăn riêng."""
+    import torch
+    # tách batch thành 2 tuple, images là list các tensor ảnh, targets là list các dict nhãn
+    images, targets = zip(*batch)
+    # stack các tensor ảnh thành 1 tensor 4 chiều (B,C,H,W), targets là list các dict nhãn
+    # B là số lượng ảnh trong batch, C là số kênh
+    return torch.stack(images), list(targets)
