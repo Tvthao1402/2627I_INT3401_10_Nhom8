@@ -94,3 +94,57 @@ def crop_sample(image, boxes, labels):
     return image, boxes, labels
 
 
+class DetectionDataset:
+    """Đọc mẫu theo chỉ số; DataLoader gọi __len__ và __getitem__."""
+
+    "thư mục chứa ảnh, size mặc định, validation, đổi màu,..,lật ngang"
+    def __init__(self, json_path, image_dir, img_size=512, train=False,
+                 color_jitter=True, random_crop=True, hflip=True,
+                 multi_scale=False, mixup=True):
+        if img_size <= 0:
+            raise ValueError("Kích thước ảnh phải dương.")
+        self.classes, self.records = load_annotations(json_path)
+        self.image_dir = Path(image_dir)
+        self.img_size = img_size
+        self.train = train
+        "chỉ đổi màu khi đc train "
+        self.color_jitter = color_jitter and train
+        self.random_crop = random_crop and train
+        self.hflip = hflip and train
+        self.multi_scale = multi_scale and train
+        self.mixup = mixup and train
+        self.multi_scale_sizes = list(range(320, 705, 32))
+        "lưu kích thước ảnh đc chọn cho lượt huấn luyện hiện tại"
+        self._epoch_img_size = None
+
+    "dataset có bao nhiêu ảnh"
+    def __len__(self):
+        return len(self.records)
+
+    "đưa vị trí ảnh, hàm tìm và mở ảnh gốc"
+    def read_original(self, index):
+        record = self.records[index]
+        name = Path(record.get("file_name", record["id"]))
+        candidates = (
+            # data/images, train/cat.jpg...
+            self.image_dir / name.name,
+            self.image_dir / name,
+            self.image_dir / Path(record["id"]).name,
+        )
+        # mở thử đường dẫn đầu, báo lỗi nếu k tồn tại
+        path = next((path for path in candidates if path.is_file()), candidates[0])
+
+        # mở ảnh và chuyển định dạng sang rgb, with đóng file sau khi đọc
+        with Image.open(path) as source:
+            image = source.convert("RGB")
+
+        # img, thông tin nhãn
+        return image, {
+            "image_id": record["id"],
+            "orig_size": (image.height, image.width),
+            "boxes": list(record["boxes"]),
+            "labels": list(record["labels"]),
+        }
+
+    "thực hiện các phép biến đổi ngẫu nhiên để giảm overfit"
+    # dataset đang xử lý, ảnh gốc đã đọc, hộp và nhãn của ảnh, kích thước resize
