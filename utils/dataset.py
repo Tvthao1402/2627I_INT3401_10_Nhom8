@@ -230,3 +230,35 @@ class DetectionDataset:
             # ảnh mosaic, tất cả các hộp hợp lệ, nhãn tương ứng
         return canvas, torch.cat(all_boxes), torch.cat(all_labels)
 
+    def __getitem__(self, index):
+        import torch
+
+        image, target = self.read_original(index)
+        size = self._epoch_img_size
+        # nếu chưa có size, chọn ngẫu nhiên, nếu k thì dùng size mặc định
+        if size is None:
+            size = random.choice(self.multi_scale_sizes) if self.multi_scale else self.img_size
+        if self.train and size >= 4 and len(self) >= 4 and random.random() < 0.4:
+            # ghép ảnh hiện tại với 3 ảnh khác thành mosaic, 40%
+            tensor, boxes, labels = self._mosaic(image, target, size)
+        else:
+            # không dùng mosaic, chỉ chuẩn bị ảnh hiện tại, 60%
+            tensor, boxes, labels = self._prepare(image, target, size)
+        if self.mixup and len(self) > 1 and random.random() < 0.15:
+            # chọn ngẫu nhiên 1 ảnh khác, trộn với ảnh hiện tại, 15%
+            second_image, second_target = self.read_original(random.randrange(len(self)))
+            # chuẩn bị ảnh thứ 2 cùng kích thước với ảnh hiện tại, có thể trộn với ảnh đầu
+            second_tensor, second_boxes, second_labels = self._prepare(
+                second_image, second_target, size
+            )
+
+            weight = random.uniform(0.4, 0.6)
+            # tensor là ảnh trộn
+            tensor = tensor * weight + second_tensor * (1 - weight)
+            # cat là cộng các hộp và nhãn của 2 ảnh, tạo thành 1 batch duy nhất
+            boxes = torch.cat((boxes, second_boxes))
+            labels = torch.cat((labels, second_labels))
+        # tensor là ảnh đã chuẩn hóa, target là dict chứa các nhãn, boxes là tensor 2 chiều (N,4), labels là tensor 1 chiều (N,)
+        return tensor, {**target, "boxes": boxes, "labels": labels}
+
+
