@@ -64,3 +64,33 @@ def load_annotations(json_path):
     return classes, list(records.values())
 
 
+def crop_sample(image, boxes, labels):
+    """Cắt ngẫu nhiên và giữ các vật thể có tâm nằm trong vùng cắt."""
+    if not boxes:
+        return image, boxes, labels
+    for _ in range(15):
+        "chọn ngẫu nhiên tỉ lệ từ 0.5 đến 1"
+        scale = random.uniform(0.5, 1.0)
+        "round để làm tròn, đảm bảo vùng cắt >=1 pixel"
+        width = max(1, round(image.width * scale))
+        height = max(1, round(image.height * scale))
+        "tọa độ ngang, dọc của góc trên trái"
+        left = random.randint(0, image.width - width)
+        top = random.randint(0, image.height - height)
+        right, bottom = left + width, top + height
+        selected_boxes, selected_labels = [], []
+
+        for (x1, y1, x2, y2), label in zip(boxes, labels):
+            "chỉ giữ vật thể nếu tâm hộp nằm trong vùng cắt"
+            if left <= (x1 + x2) / 2 < right and top <= (y1 + y2) / 2 < bottom:
+                "đổi sang hệ tọa độ mới"
+                selected_boxes.append((
+                    max(x1, left) - left, max(y1, top) - top,
+                    min(x2, right) - left, min(y2, bottom) - top,
+                ))
+                selected_labels.append(label)
+        if selected_boxes:
+            return image.crop((left, top, right, bottom)), selected_boxes, selected_labels
+    return image, boxes, labels
+
+
